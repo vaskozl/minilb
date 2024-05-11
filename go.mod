@@ -4,6 +4,7 @@ go 1.22.2
 
 require (
 	github.com/miekg/dns v1.1.59
+	github.com/sirupsen/logrus v1.9.3
 	k8s.io/api v0.30.0
 	k8s.io/apimachinery v0.30.0
 	k8s.io/client-go v0.30.0
