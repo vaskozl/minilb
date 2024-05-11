@@ -1,9 +1,13 @@
-# Why ?
+# minilb - Lightweight DNS based load balancer for Kubernetes
 
-* MetalLB L2
+## Why create a new loadbalancer?
+
+While MetalLB has long been an many CNIs now supports BGP advertisement CRDs, issues still remain:
+
+* MetalLB L2:
     * Does not offer any loadbalancing between service replicas and throughput is limited to a single node
     * Slow failover that's hard to debug
-* BGP solutions including MetalLB, Calico, Cilium and kube-rouer have other limitations::
+* BGP solutions including MetalLB, Calico, Cilium and kube-rouer have other limitations:
     * Forward all non-peer traffic through a default gateway. This limits your bandwith to the cluster and adds an extra hop.
     * Can suffer from assymetric routing issues LANs and requires disabling ICMP redirects.
     * Requires a BGP capable router at all times which can limit flexibility
@@ -11,7 +15,9 @@
 
 Furthemore other load-balancing solutions tend to be much heavier than, `minilb` - requiring daemonsets that tend to use between 15-100m CPU and between 35-150Mi of RAM in my testing. This amounts to undue energy usage and less room for your actual applications. `minilb` works with any CNI. `flannel` is particularly suited, since when in `host-gw` mode performs native routing similar to the other CNIs with no VXLAN penalties while using only 1m/10Mi per node.
 
-# How
+Lastly all other solutions rely on CRDs which make boostraping a cluster that much more of a pain.
+
+## How `minilb` works
 
 At startup `minilb` looks up all routes to nodes and prints them out for you so you can set on default gateways
 or even directly on devices. The manual step is similar to how you would add each node as a BGP peer, but instead you just add the static route to the node. The PodCIDRs are normally assigned by [kube-controller-manager](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/) and are static once the node is provisioned.
@@ -72,7 +78,7 @@ location: https://gate.sko.ai/?rd=https://paperless.sko.ai:8443/
 cache-control: no-cache
 ```
 
-# Limitations
+## Limitations
 
 By far the biggest limitations is that because we completely bypass the service ip and  `kube-proxy`, the service `port` to `targetPort` mapping is bypassed. This means that you need to have the containers listening to the same ports you want to access them by. Traditionally this was a problem for ports less than `1024` which required root, but this can now easily be remedied since 1.22:
 
@@ -92,3 +98,7 @@ spec:
 There are a few other limitations:
     * The upstream needs to respect the short TTLs of the `minilb` response
     * Some apps do DNS lookups only once and cache the results indefinitely.
+
+## Is `minilb` production ready?
+
+No, it's still very new and experimental,  but you may use it for small setups such as in your homelab.
