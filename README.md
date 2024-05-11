@@ -28,7 +28,11 @@ Add the following routes to your default gateway (router):
 route -n add -net 10.244.0.0/24 192.168.1.30
 route -n add -net 10.244.1.0/24 192.168.1.31
 route -n add -net 10.244.2.0/24 192.168.1.32
+```
 
+
+Example queries that `minilb` handles:
+```
 2024/05/11 13:11:06 DNS server started on :53
 ;; opcode: QUERY, status: NOERROR, id: 10290
 ;; flags: qr aa rd; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 0
@@ -42,10 +46,10 @@ mosquitto.automation.minilb.    5    IN    A    10.244.1.103
 ```
 
 
- The idea is that the router has static routes for the podcidr for each node (based on the podCIDR of the node object), and we run a resolver which resolves service -> pod ips. When you add a node you have to add a new static route but even with BGP you generally have to add new nodes as neighbours so it's no different. One of the benefits is that you can advertise the static routes over DHCP to remove the hop through the router for traffic local to the LAN. This also means you don't need BGP and can use any router that supports static routes. To make ingresses work, the controller could set the externalIP of each service to the hostname that resolves to the pods, that way external-dns and k8s-gateway should just work. What do you guys think about the idea?
+ The idea is that the router has static routes for the podCIDR for each node (based on the node spec), and we run a resolver which resolves service to pod IPs. One of the benefits is that you can advertise the static routes over DHCP to remove the hop through the router for traffic local to the LAN. This also means you don't need BGP and can use any router that supports static routes. To make ingresses work, the controller sets the `status.loadBalancer.Hostname` of each service to the hostname that resolves to the pods, that way `external-dns` and `k8s-gateway` will CNAME your defiend `hosts` to the associated `.minilb` record.
 
 
-`minilb` updates the external IPs of LoadBalancer services to the configured domain.
+`minilb` updates the external IPs of LoadBalancer services to the configured domain:
 ```
 $ k get svc -n haproxy internal-kubernetes-ingress
 NAME                          TYPE           CLUSTER-IP       EXTERNAL-IP                                  PORT(S)                                                                               AGE
@@ -94,11 +98,11 @@ spec:
       value: "80"
 ```
 
+There are other things which you should consider:
 
-There are a few other limitations:
-    * The upstream needs to respect the short TTLs of the `minilb` response
-    * Some apps do DNS lookups only once and cache the results indefinitely.
+* The upstream needs to respect the short TTLs of the `minilb` response
+* Some apps do DNS lookups only once and cache the results indefinitely.
 
 ## Is `minilb` production ready?
 
-No, it's still very new and experimental,  but you may use it for small setups such as in your homelab.
+No, it's still very new and experimental, but you may use it for small setups such as in your homelab.
