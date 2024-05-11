@@ -25,9 +25,9 @@ or even directly on devices. The manual step is similar to how you would add eac
 On startup `minilb` prints:
 ```
 Add the following routes to your default gateway (router):
-route -n add -net 10.244.0.0/24 192.168.1.30
-route -n add -net 10.244.1.0/24 192.168.1.31
-route -n add -net 10.244.2.0/24 192.168.1.32
+ip route add 10.244.0.0/24 via 192.168.1.30
+ip route add 10.244.1.0/24 via 192.168.1.31
+ip route add 10.244.2.0/24 via 192.168.1.32
 ```
 
 

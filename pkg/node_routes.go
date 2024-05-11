@@ -4,6 +4,7 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"os"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,7 +21,7 @@ func PrintNodeRoutes(clientset *kubernetes.Clientset) {
 	for _, node := range nodes.Items {
 		nodeIP := getNodeAddress(node.Status.Addresses)
 		for _, cidr := range node.Spec.PodCIDRs {
-			fmt.Printf("route -n add -net %s %s\n", cidr, nodeIP)
+			fmt.Fprintf(os.Stderr, "ip route add %s via %s\n", cidr, nodeIP)
 		}
 	}
 	fmt.Printf("\n")
