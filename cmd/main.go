@@ -29,6 +29,10 @@ import (
 var (
 	kubeconfig = flag.String("kubeconfig", "", "Path to a kubeconfig file")
 	domain     = flag.String("domain", "minilb", "Zone under which to resolve services")
+	listen     = flag.String("listen", ":53", "Address and port to listen to")
+
+	resyncPeriod = flag.Int("resync", 300, "How often to check services with the API ")
+	ttl          = flag.Uint("ttl", 5, "Record time to live in seconds")
 )
 
 func main() {
@@ -52,7 +56,7 @@ func main() {
 
 	ctx := context.Background()
 
-	informerFactory := informers.NewSharedInformerFactory(clientset, time.Second*30)
+	informerFactory := informers.NewSharedInformerFactory(clientset, time.Duration(*resyncPeriod) * time.Second)
 	serviceInformer := informerFactory.Core().V1().Services().Informer()
 
 	serviceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -73,7 +77,7 @@ func main() {
 	informerFactory.Start(stopCh)
 
 	// Create a DNS server
-	dnsServer := &dns.Server{Addr: ":53", Net: "udp"}
+	dnsServer := &dns.Server{Addr: *listen, Net: "udp"}
 
 	// Setup DNS handler
 	dns.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
@@ -104,7 +108,7 @@ func main() {
 					rr := dns.TypeA
 					ip := net.ParseIP(address.IP)
 					m.Answer = append(m.Answer, &dns.A{
-						Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: rr, Class: dns.ClassINET, Ttl: 5},
+						Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: rr, Class: dns.ClassINET, Ttl: uint32(*ttl)},
 						A:   ip,
 					})
 				}
