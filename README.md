@@ -13,14 +13,14 @@ While MetalLB has long been an many CNIs now supports BGP advertisement CRDs, is
     * Requires a BGP capable router at all times which can limit flexibility
     * Nodes generally get a static subnet and BGP does close to nothing, neither Cilium nor Flannel actually use it to "distribute" routes between nodes since the routes are readily available from the APIServer.
 
-Furthemore other load-balancing solutions tend to be much heavier than, `minilb` - requiring daemonsets that tend to use between 15-100m CPU and between 35-150Mi of RAM in my testing. This amounts to undue energy usage and less room for your actual applications. `minilb` works with any CNI. `flannel` is particularly suited, since when in `host-gw` mode performs native routing similar to the other CNIs with no VXLAN penalties while using only 1m/10Mi per node.
+Furthemore other load-balancing solutions tend to be much heavier than, `minilb` - requiring daemonsets that tend to use between 15-100m CPU and between 35-150Mi of RAM in my testing. This amounts to undue energy usage and less room for your actual applications. `flannel` is particularly suited, since when in `host-gw` mode performs native routing similar to the other CNIs with no VXLAN penalties while using only 1m/10Mi per node.
 
 Lastly all other solutions rely on CRDs which make boostraping a cluster that much more of a pain.
 
 ## How `minilb` works
 
 At startup `minilb` looks up all routes to nodes and prints them out for you so you can set on default gateways
-or even directly on devices. The manual step is similar to how you would add each node as a BGP peer, but instead you just add the static route to the node. The PodCIDRs are normally assigned by [kube-controller-manager](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/) and are static once the node is provisioned.
+or even directly on devices. The manual step is similar to how you would add each node as a BGP peer, but instead you just add the static route to the node. The podCIDRss are normally assigned by [kube-controller-manager](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/) and are static once the node is provisioned.
 
 On startup `minilb` prints:
 ```
@@ -46,7 +46,7 @@ mosquitto.automation.minilb.    5    IN    A    10.244.1.103
 ```
 
 
- The idea is that the router has static routes for the podCIDR for each node (based on the node spec), and we run a resolver which resolves service to pod IPs. One of the benefits is that you can advertise the static routes over DHCP to remove the hop through the router for traffic local to the LAN. This also means you don't need BGP and can use any router that supports static routes. To make ingresses work, the controller sets the `status.loadBalancer.Hostname` of each service to the hostname that resolves to the pods, that way `external-dns` and `k8s-gateway` will CNAME your defiend `hosts` to the associated `.minilb` record.
+ The idea is that the router has static routes for the podCIDRs for each node (based on the node spec), and we run a resolver which resolves service to pod IPs. One of the benefits is that you can advertise the static routes over DHCP to remove the hop through the router for traffic local to the LAN. This also means you don't need BGP and can use any router that supports static routes. To make ingresses work, the controller sets the `status.loadBalancer.Hostname` of each service to the hostname that resolves to the pods, that way `external-dns` and `k8s-gateway` will CNAME your defiend `hosts` to the associated `.minilb` record.
 
 
 `minilb` updates the external IPs of LoadBalancer services to the configured domain:
@@ -81,6 +81,16 @@ content-length: 0
 location: https://gate.sko.ai/?rd=https://paperless.sko.ai:8443/
 cache-control: no-cache
 ```
+
+## Requirements
+
+`minilb` expects your default gateway to have static routes for each pod. In order to help se that up it prints use the podCIDRs assigned by kube-controller-manager. Typically `kube-controller-manager` is runwith the `--allocate-node-cidrs`.
+
+Both `flanneld` and `kube-router` should require no additional configuration as they use `podCIDRs` by default.
+
+For Cilium the [Kubernetes Host Scope IPAM](https://docs.cilium.io/en/stable/network/concepts/ipam/kubernetes/) should be used. The default Cluster Scope.
+
+Calico does not use the CIDR's assigned by `kube-controller-manager` but instead assigns blocks of /28 dynamically. This makes it unsuitable for use with `minilb`.
 
 ## Limitations
 
