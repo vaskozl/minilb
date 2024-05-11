@@ -11,21 +11,32 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
+	"k8s.io/client-go/tools/cache"
 	"github.com/miekg/dns"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+	"path/filepath"
+	"k8s.io/client-go/informers"
+
+	"github.com/vaskozl/minilb/pkg"
 )
 
 var (
 	kubeconfig = flag.String("kubeconfig", "", "Path to a kubeconfig file")
-	domain     = "k8s" // Change this to your domain
+	domain     = flag.String("domain", "minilb", "Zone under which to resolve services")
 )
 
 func main() {
 	flag.Parse()
+
+	if *kubeconfig == "" && !inCluster() {
+		*kubeconfig = filepath.Join(homedir.HomeDir(), ".kube", "config")
+	}
 
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
@@ -37,7 +48,29 @@ func main() {
 		log.Fatalf("Error creating clientset: %v", err)
 	}
 
-	PrintNodeRoutes(clientset)
+	pkg.PrintNodeRoutes(clientset)
+
+	ctx := context.Background()
+
+	informerFactory := informers.NewSharedInformerFactory(clientset, time.Second*30)
+	serviceInformer := informerFactory.Core().V1().Services().Informer()
+
+	serviceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			service := obj.(*v1.Service)
+			if service.Spec.Type == v1.ServiceTypeLoadBalancer {
+
+				lbDNS := service.Name + "." + service.Namespace + "." + *domain
+				if err := updateServiceStatus(ctx, clientset, lbDNS, service); err != nil {
+					fmt.Fprintf(os.Stderr, "Error updating service status: %v\n", err)
+				}
+			}
+		},
+	})
+
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+	informerFactory.Start(stopCh)
 
 	// Create a DNS server
 	dnsServer := &dns.Server{Addr: ":53", Net: "udp"}
@@ -50,7 +83,7 @@ func main() {
 
 		if r.Question[0].Qtype == dns.TypeA {
 
-			name := strings.TrimSuffix(r.Question[0].Name, "."+domain+".")
+			name := strings.TrimSuffix(r.Question[0].Name, "."+*domain+".")
 			parts := strings.SplitN(name, ".", 2)
 			if len(parts) != 2 {
 				log.Printf("Invalid domain format: %s", name)
@@ -112,4 +145,27 @@ func getEndpoints(clientset *kubernetes.Clientset, serviceName string, namespace
 		return nil, err
 	}
 	return endpoints, nil
+}
+
+// inCluster checks whether the code is running inside a Kubernetes cluster
+func inCluster() bool {
+	_, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	return err == nil
+}
+
+func updateServiceStatus(ctx context.Context, clientset *kubernetes.Clientset, lbDNS string, svc *v1.Service) error {
+	if len(svc.Status.LoadBalancer.Ingress) != 1 ||
+		svc.Status.LoadBalancer.Ingress[0].IP != "" ||
+		svc.Status.LoadBalancer.Ingress[0].Hostname != lbDNS {
+		log.Printf("Setting hostname of %s in %s to %s", svc.Name, svc.Namespace, lbDNS)
+		svc.Status.LoadBalancer.Ingress = []v1.LoadBalancerIngress{
+			{
+				Hostname: lbDNS,
+			},
+		}
+		if _, err := clientset.CoreV1().Services(svc.Namespace).UpdateStatus(ctx, svc, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
