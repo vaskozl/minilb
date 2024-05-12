@@ -34,6 +34,8 @@ var (
 
 	resyncPeriod = flag.Int("resync", 300, "How often to check services with the API ")
 	ttl          = flag.Uint("ttl", 5, "Record time to live in seconds")
+
+	controller = flag.Bool("controller", false, "Run the service controller in addition to the DNS server")
 )
 
 func main() {
@@ -67,25 +69,28 @@ func main() {
 
 	ctx := context.Background()
 
-	informerFactory := informers.NewSharedInformerFactory(clientset, time.Duration(*resyncPeriod) * time.Second)
-	serviceInformer := informerFactory.Core().V1().Services().Informer()
-
-	serviceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			service := obj.(*v1.Service)
-			if service.Spec.Type == v1.ServiceTypeLoadBalancer {
-
-				lbDNS := service.Name + "." + service.Namespace + "." + *domain
-				if err := updateServiceStatus(ctx, clientset, lbDNS, service); err != nil {
-					log.Errorf("Error updating service status: %v\n", err)
-				}
-			}
-		},
-	})
-
 	stopCh := make(chan struct{})
 	defer close(stopCh)
-	informerFactory.Start(stopCh)
+
+	if (*controller) {
+		informerFactory := informers.NewSharedInformerFactory(clientset, time.Duration(*resyncPeriod) * time.Second)
+		serviceInformer := informerFactory.Core().V1().Services().Informer()
+
+		serviceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {
+				service := obj.(*v1.Service)
+				if service.Spec.Type == v1.ServiceTypeLoadBalancer {
+
+					lbDNS := service.Name + "." + service.Namespace + "." + *domain
+					if err := updateServiceStatus(ctx, clientset, lbDNS, service); err != nil {
+						log.Errorf("Error updating service status: %v\n", err)
+					}
+				}
+			},
+		})
+
+		informerFactory.Start(stopCh)
+	}
 
 	// Create a DNS server
 	dnsServer := &dns.Server{Addr: *listen, Net: "udp"}

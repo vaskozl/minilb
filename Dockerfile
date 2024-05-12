@@ -16,9 +16,9 @@ RUN --mount=type=cache,target=/go/pkg/mod/ \
   go build -o minilib cmd/main.go
 
 FROM alpine:latest
+RUN apk add --no-cache catatonit
 
 # Copy the Pre-built binary file from the previous stage
-COPY --from=build /app/minilib /app/minilib
+COPY --from=build /app/minilib /app/minilb
 
-# TODO: Add catatonit
-CMD ["/app/minilib"]
+ENTRYPOINT ["catatonit", "--", "/app/minilb"]
