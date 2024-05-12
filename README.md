@@ -92,6 +92,10 @@ For Cilium the [Kubernetes Host Scope IPAM](https://docs.cilium.io/en/stable/net
 
 Calico does not use the CIDR's assigned by `kube-controller-manager` but instead assigns blocks of /28 dynamically. This makes it unsuitable for use with `minilb`.
 
+## Deployment
+
+Check out the [example HA deployment deployment](https://github.com/vaskozl/home-infra/tree/main/cluster/minilb)  leveraging [bjw-s' app-template](https://bjw-s.github.io/helm-charts/docs/app-template/). You must run only a single replica with `-controller=true` but can otherwise run as many replicas as you like. Your network should then be configured  to use minilb as a resolver for the `.minilb` (or any other chosen) domain. The suggested way to do this is to expose `minilb` itself as a `NodePort`, after which after can use `type=LoadBalancer` for everything else.
+
 ## Limitations
 
 By far the biggest limitations is that because we completely bypass the service ip and  `kube-proxy`, the service `port` to `targetPort` mapping is bypassed. This means that you need to have the containers listening to the same ports you want to access them by. Traditionally this was a problem for ports less than `1024` which required root, but this can now easily be remedied since 1.22:
