@@ -3,12 +3,11 @@ package pkg
 
 import (
 	"context"
-	"fmt"
-	"os"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	log "github.com/sirupsen/logrus"
 )
 
 func PrintNodeRoutes(clientset *kubernetes.Clientset) {
@@ -17,14 +16,13 @@ func PrintNodeRoutes(clientset *kubernetes.Clientset) {
 		return
 	}
 
-	fmt.Printf("Add the following routes to your default gateway (router):\n")
+	log.Info("Add the following routes to your default gateway (router):\n")
 	for _, node := range nodes.Items {
 		nodeIP := getNodeAddress(node.Status.Addresses)
 		for _, cidr := range node.Spec.PodCIDRs {
-			fmt.Fprintf(os.Stderr, "ip route add %s via %s\n", cidr, nodeIP)
+			log.Infof("ip route add %s via %s\n", cidr, nodeIP)
 		}
 	}
-	fmt.Printf("\n")
 }
 
 func getNodeAddress(addresses []corev1.NodeAddress) string {
