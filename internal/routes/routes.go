@@ -1,16 +1,17 @@
-// node_routes.go
-package pkg
+package routes
 
 import (
 	"context"
 
+	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	log "github.com/sirupsen/logrus"
+
+	"github.com/vaskozl/minilb/internal/k8s"
 )
 
-func PrintNodeRoutes(clientset *kubernetes.Clientset) {
+func Print() {
+	clientset := k8s.NewClient()
 	nodes, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		return
