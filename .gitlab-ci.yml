@@ -1,0 +1,14 @@
+include:
+ - project: doudous/ci-templates
+   ref: main
+   file: build.yaml
+
+ctr:
+  needs: []
+  extends: .build_container
+  stage: build
+  variables:
+    DOCKER_AUTH_CONFIG: $GHCR_AUTH_CONFIG
+    REPO: ghcr.io/vaskozl/minilb
+  only:
+  - tags
