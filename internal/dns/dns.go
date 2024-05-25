@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"net"
 	"strings"
+	"fmt"
 
 	"github.com/miekg/dns"
 	"k8s.io/klog/v2"
@@ -68,7 +69,7 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 			// Shuffle the responses so we get some load balancing
 			shuffleDNSAnswers(m.Answer)
 
-			klog.Info(m.Answer,
+			klog.InfoS(fmt.Sprintf("%+v", m.Answer),
 				"svc", serviceName,
 				"ns",  namespace,
 			)

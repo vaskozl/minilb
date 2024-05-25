@@ -33,6 +33,17 @@ func Run(ctx context.Context) {
 				}
 			}
 		},
+		UpdateFunc: func(old, obj interface{}) {
+			service := obj.(*v1.Service)
+			if service.Spec.Type == v1.ServiceTypeLoadBalancer {
+
+				lbDNS := service.Name + "." + service.Namespace + "." + *config.Domain
+				if err := updateServiceStatus(ctx, clientset, lbDNS, service); err != nil {
+					klog.Error(err, "Error updating service status")
+				}
+			}
+		},
+
 	})
 
 	stopCh := make(chan struct{})
@@ -52,7 +63,7 @@ func updateServiceStatus(ctx context.Context, clientset *kubernetes.Clientset, l
 	if len(svc.Status.LoadBalancer.Ingress) != 1 ||
 		svc.Status.LoadBalancer.Ingress[0].IP != "" ||
 		svc.Status.LoadBalancer.Ingress[0].Hostname != lbDNS {
-		klog.Info("Set host",
+		klog.InfoS("Set host",
 			"svc", svc.Name,
 			"ns",  svc.Namespace,
 			"lb",  lbDNS,
