@@ -2,20 +2,20 @@
 
 ## Why create a new loadbalancer?
 
-While MetalLB has long been an many CNIs now supports BGP advertisement CRDs, issues still remain:
+While MetalLB has long been the standard and many CNIs now supports BGP advertisement, issues still remain:
 
 * MetalLB L2:
     * Does not offer any loadbalancing between service replicas and throughput is limited to a single node
-    * Slow failover that's hard to debug
+    * Slow failover
 * BGP solutions including MetalLB, Calico, Cilium and kube-rouer have other limitations:
-    * Forward all non-peer traffic through a default gateway. This limits your bandwith to the cluster and adds an extra hop.
-    * Can suffer from assymetric routing issues LANs and requires disabling ICMP redirects.
+    * Forward all non-peer traffic through a default gateway. This limits your bandwith to the cluster and adds an extra hop
+    * Can suffer from assymetric routing issues on LANs and generally requires disabling ICMP redirects
     * Requires a BGP capable router at all times which can limit flexibility
     * Nodes generally get a static subnet and BGP does close to nothing, neither Cilium nor Flannel actually use it to "distribute" routes between nodes since the routes are readily available from the APIServer.
 
-Furthemore other load-balancing solutions tend to be much heavier than, `minilb` - requiring daemonsets that tend to use between 15-100m CPU and between 35-150Mi of RAM in my testing. This amounts to undue energy usage and less room for your actual applications. `flannel` is particularly suited, since when in `host-gw` mode performs native routing similar to the other CNIs with no VXLAN penalties while using only 1m/10Mi per node.
+Furthemore other load-balancing solutions tend to be much heavier - requiring daemonsets that tend to use between 15-100m CPU and between 35-150Mi of RAM in my tests. This amounts to undue energy usage and less room for your actual applications. `flannel` is particularly suited, since when in `host-gw` mode performs native routing similar to the other CNIs with no VXLAN penalties while using only 1m/10Mi per node.
 
-Lastly all other solutions rely on CRDs which make boostraping a cluster that much more of a pain.
+Lastly all other solutions rely on CRDs which make boostraping a cluster that much more difficult.
 
 ## How `minilb` works
 
@@ -46,7 +46,7 @@ mosquitto.automation.minilb.    5    IN    A    10.244.1.103
 ```
 
 
- The idea is that the router has static routes for the podCIDRs for each node (based on the node spec), and we run a resolver which resolves service to pod IPs. One of the benefits is that you can advertise the static routes over DHCP to remove the hop through the router for traffic local to the LAN. This also means you don't need BGP and can use any router that supports static routes. To make ingresses work, the controller sets the `status.loadBalancer.Hostname` of each service to the hostname that resolves to the pods, that way `external-dns` and `k8s-gateway` will CNAME your defiend `hosts` to the associated `.minilb` record.
+ The idea is that the router has static routes for the podCIDRs for each node (based on the node spec), and we run a resolver which resolves the service "hostname" to pod IPs. One of the benefits is that you can advertise the static routes over DHCP to remove the hop through the router for traffic local to the LAN. This also means you don't need BGP and can use any router that supports static routes. To make ingresses work, the controller sets the `status.loadBalancer.Hostname` of each service to the hostname that resolves to the pods, that way `external-dns` and `k8s-gateway` will CNAME your defined Ingress `hosts` to the associated `.minilb` record.
 
 
 `minilb` updates the external IPs of LoadBalancer services to the configured domain:
@@ -84,21 +84,21 @@ cache-control: no-cache
 
 ## Requirements
 
-`minilb` expects your default gateway to have static routes for each pod. In order to help se that up it prints use the podCIDRs assigned by kube-controller-manager. Typically `kube-controller-manager` is runwith the `--allocate-node-cidrs`.
+`minilb` expects your default gateway to have static routes for the nodes `podCIDRs`. In order to help set that up it prints podCIDRs assigned by kube-controller-manager on startup. Typically this is achieved by running `kube-controller-manager` with the `--allocate-node-cidrs` flag.
 
 Both `flanneld` and `kube-router` should require no additional configuration as they use `podCIDRs` by default.
 
-For Cilium the [Kubernetes Host Scope IPAM](https://docs.cilium.io/en/stable/network/concepts/ipam/kubernetes/) should be used. The default Cluster Scope.
+For Cilium the [Kubernetes Host Scope IPAM](https://docs.cilium.io/en/stable/network/concepts/ipam/kubernetes/) should be used. The default is Cluster Scope.
 
 Calico does not use the CIDR's assigned by `kube-controller-manager` but instead assigns blocks of /28 dynamically. This makes it unsuitable for use with `minilb`.
 
 ## Deployment
 
-Check out the [example HA deployment deployment](https://github.com/vaskozl/home-infra/tree/main/cluster/minilb)  leveraging [bjw-s' app-template](https://bjw-s.github.io/helm-charts/docs/app-template/). You must run only a single replica with `-controller=true` but can otherwise run as many replicas as you like. Your network should then be configured  to use minilb as a resolver for the `.minilb` (or any other chosen) domain. The suggested way to do this is to expose `minilb` itself as a `NodePort`, after which after can use `type=LoadBalancer` for everything else.
+[Reference the example HA deployment deployment](https://github.com/vaskozl/home-infra/tree/main/cluster/minilb)  leveraging [bjw-s' app-template](https://bjw-s.github.io/helm-charts/docs/app-template/). You must run only a single replica with `-controller=true` but can otherwise run as many replicas as you like. Your network should then be configured  to use minilb as a resolver for the `.minilb` (or any other chosen) domain. The suggested way to do this is to expose `minilb` itself as a `NodePort`, after which after can use `type=LoadBalancer` for everything else.
 
 ## Limitations
 
-By far the biggest limitations is that because we completely bypass the service ip and  `kube-proxy`, the service `port` to `targetPort` mapping is bypassed. This means that you need to have the containers listening to the same ports you want to access them by. Traditionally this was a problem for ports less than `1024` which required root, but this can now easily be remedied since 1.22:
+By far the biggest limitations is that because we completely bypass the service ip and  `kube-proxy`, the service `port` to `targetPort` mapping is bypassed. This means that you need to have the containers listening to the same ports you want to access them by. Traditionally this was a problem for ports less than `1024` which required root, but this is now easily achieved directly since 1.22:
 
 ```
 apiVersion: v1
@@ -112,9 +112,9 @@ spec:
       value: "80"
 ```
 
-There are other things which you should consider:
+There are a few other things which you should consider:
 
-* The upstream needs to respect the short TTLs of the `minilb` response
+* Users needs to respect the short TTLs of the `minilb` response
 * Some apps do DNS lookups only once and cache the results indefinitely.
 
 ## Is `minilb` production ready?
