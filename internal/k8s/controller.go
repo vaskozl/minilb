@@ -46,9 +46,7 @@ func Run(ctx context.Context) {
 
 	})
 
-	stopCh := make(chan struct{})
-	defer close(stopCh)
-	informerFactory.Start(stopCh)
+	informerFactory.Start(ctx.Done())
 }
 
 func GetEndpoints(serviceName string, namespace string) (*v1.Endpoints, error) {
