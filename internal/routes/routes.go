@@ -3,7 +3,7 @@ package routes
 import (
 	"context"
 
-	log "github.com/sirupsen/logrus"
+	"k8s.io/klog/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -17,11 +17,11 @@ func Print() {
 		return
 	}
 
-	log.Info("Add the following routes to your default gateway (router):\n")
+	klog.Info("Add the following routes to your default gateway (router):\n")
 	for _, node := range nodes.Items {
 		nodeIP := getNodeAddress(node.Status.Addresses)
 		for _, cidr := range node.Spec.PodCIDRs {
-			log.Infof("ip route add %s via %s\n", cidr, nodeIP)
+			klog.Infof("ip route add %s via %s\n", cidr, nodeIP)
 		}
 	}
 }

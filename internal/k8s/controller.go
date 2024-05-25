@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"k8s.io/klog/v2"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
@@ -16,9 +16,7 @@ import (
 
 var clientset *kubernetes.Clientset
 
-func Run() {
-	ctx := context.Background()
-
+func Run(ctx context.Context) {
 	clientset = NewClient()
 
 	informerFactory := informers.NewSharedInformerFactory(clientset, time.Duration(*config.ResyncPeriod)*time.Second)
@@ -31,7 +29,7 @@ func Run() {
 
 				lbDNS := service.Name + "." + service.Namespace + "." + *config.Domain
 				if err := updateServiceStatus(ctx, clientset, lbDNS, service); err != nil {
-					log.Error(err, "Error updating service status")
+					klog.Error(err, "Error updating service status")
 				}
 			}
 		},
@@ -54,11 +52,11 @@ func updateServiceStatus(ctx context.Context, clientset *kubernetes.Clientset, l
 	if len(svc.Status.LoadBalancer.Ingress) != 1 ||
 		svc.Status.LoadBalancer.Ingress[0].IP != "" ||
 		svc.Status.LoadBalancer.Ingress[0].Hostname != lbDNS {
-		log.WithFields(log.Fields{
-			"svc": svc.Name,
-			"ns":  svc.Namespace,
-			"lb":  lbDNS,
-		}).Info("Set host for ", svc.Name)
+		klog.Info("Set host",
+			"svc", svc.Name,
+			"ns",  svc.Namespace,
+			"lb",  lbDNS,
+		)
 
 		svc.Status.LoadBalancer.Ingress = []v1.LoadBalancerIngress{
 			{

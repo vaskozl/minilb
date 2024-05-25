@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/miekg/dns"
-	log "github.com/sirupsen/logrus"
+	"k8s.io/klog/v2"
 
 	"github.com/vaskozl/minilb/internal/config"
 	"github.com/vaskozl/minilb/internal/k8s"
@@ -25,10 +25,10 @@ func Run() {
 	go func() {
 		err := server.ListenAndServe()
 		if err != nil {
-			log.Fatalf("Error starting DNS server: %v", err)
+			klog.Fatalf("Error starting DNS server: %v", err)
 		}
 	}()
-	log.Infof("DNS server started on %s", server.Addr)
+	klog.Infof("DNS server started on %s", server.Addr)
 }
 
 func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
@@ -41,7 +41,7 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 			name := strings.TrimSuffix(r.Question[0].Name, "."+*config.Domain+".")
 			parts := strings.SplitN(name, ".", 2)
 			if len(parts) != 2 {
-				log.Warnf("Invalid domain format: %s", name)
+				klog.Warningf("Invalid domain format: %s", name)
 				w.WriteMsg(m)
 				return
 			}
@@ -49,7 +49,7 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 			endpoints, err := k8s.GetEndpoints(serviceName, namespace)
 			if err != nil {
-				log.Errorf("Error getting Endpoints for %s: %v", serviceName, err)
+				klog.Errorf("Error getting Endpoints for %s: %v", serviceName, err)
 				w.WriteMsg(m)
 				return
 			}
@@ -68,14 +68,14 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 			// Shuffle the responses so we get some load balancing
 			shuffleDNSAnswers(m.Answer)
 
-			log.WithFields(log.Fields{
-				"svc": serviceName,
-				"ns":  namespace,
-			}).Debug(m.Answer)
+			klog.Info(m.Answer,
+				"svc", serviceName,
+				"ns",  namespace,
+			)
 		}
 
 		w.WriteMsg(m)
-		log.Tracef("%v", m)
+		klog.V(2).Infof("%v", m)
 }
 
 func shuffleDNSAnswers(answers []dns.RR) {
