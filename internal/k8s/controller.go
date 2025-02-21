@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
@@ -17,9 +18,13 @@ import (
 	"github.com/vaskozl/minilb/internal/config"
 )
 
+const HostnameAnnotation = "minilb/host"
+
 var (
 	clientset     *kubernetes.Clientset
 	ingressLister netv1.IngressLister
+	serviceMap    = make(map[string]string) // Map of hostname -> Service
+	mutex         = sync.RWMutex{}
 )
 
 func Run(ctx context.Context) {
@@ -30,29 +35,35 @@ func Run(ctx context.Context) {
 	serviceInformer := informerFactory.Core().V1().Services().Informer()
 
 	serviceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			service := obj.(*v1.Service)
-			if service.Spec.Type == v1.ServiceTypeLoadBalancer {
-
-				lbDNS := service.Name + "." + service.Namespace + "." + *config.Domain
-				if err := updateServiceStatus(ctx, clientset, lbDNS, service); err != nil {
-					klog.Error(err, "Error updating service status")
-				}
-			}
-		},
-		UpdateFunc: func(old, obj interface{}) {
-			service := obj.(*v1.Service)
-			if service.Spec.Type == v1.ServiceTypeLoadBalancer {
-
-				lbDNS := service.Name + "." + service.Namespace + "." + *config.Domain
-				if err := updateServiceStatus(ctx, clientset, lbDNS, service); err != nil {
-					klog.Error(err, "Error updating service status")
-				}
-			}
-		},
+		AddFunc:    func(newObj interface{}) { onAddOrUpdate(ctx, newObj) },
+		UpdateFunc: func(oldObj, newObj interface{}) { onAddOrUpdate(ctx, newObj) },
 	})
 
 	informerFactory.Start(ctx.Done())
+}
+
+// onAddOrUpdate updates sets the svc hostname and updates the hostname map
+func onAddOrUpdate(ctx context.Context, obj interface{}) {
+	svc, ok := obj.(*v1.Service)
+	if !ok {
+		return
+	}
+
+	if svc.Spec.Type != v1.ServiceTypeLoadBalancer {
+		return
+	}
+
+	lbDNS := svc.Name + "." + svc.Namespace + "." + *config.Domain
+	if err := updateServiceStatus(ctx, clientset, lbDNS, svc); err != nil {
+		klog.Error(err, "Error updating service status")
+	}
+
+	if hostname, exists := svc.Annotations[HostnameAnnotation]; exists {
+		mutex.Lock()
+		serviceMap[hostname] = lbDNS
+		mutex.Unlock()
+		klog.Infof("Updated: Hostname %s -> Service %s/%s\n", hostname, svc.Namespace, svc.Name)
+	}
 }
 
 func GetEndpoints(serviceName string, namespace string) (*v1.Endpoints, error) {
@@ -65,6 +76,13 @@ func GetEndpoints(serviceName string, namespace string) (*v1.Endpoints, error) {
 
 func GetAddressForHostname(hostname string) (string, error) {
 	// List all Ingresses across all namespaces
+	mutex.RLock()
+	svcHost, ok := serviceMap[hostname]
+	mutex.RUnlock()
+	if ok {
+		return svcHost, nil
+	}
+
 	ingresses, err := ingressLister.List(labels.Everything())
 	if err != nil {
 		return "", err
