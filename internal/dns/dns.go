@@ -51,7 +51,6 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 				return
 			}
 			name = tmp
-			klog.Info(name)
 		}
 		name = strings.TrimSuffix(name, suffix)
 
