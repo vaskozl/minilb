@@ -30,7 +30,6 @@ ip route add 10.244.1.0/24 via 192.168.1.31
 ip route add 10.244.2.0/24 via 192.168.1.32
 ```
 
-
 Example queries that `minilb` handles:
 ```
 2024/05/11 13:11:06 DNS server started on :53
@@ -68,18 +67,36 @@ Name:    internal-kubernetes-ingress.haproxy.minilb
 Address: 10.244.1.104
 ```
 
-When `k8s-gateway` or `external-dns` are present, they will CNAME any ingress hosts to our minilb service hostname.
-
+Since version `0.0.4` minilb also supports resolving ingresses directly, which removes the need to use `k8s-gateway`.
 ```
 $ k get ingress paperless-ngx
 NAME            CLASS              HOSTS              ADDRESS                                      PORTS   AGE
 paperless-ngx   haproxy-internal   paperless.sko.ai   internal-kubernetes-ingress.haproxy.minilb   80      22d
 
-$ curl -I https://paperless.sko.ai:8443
-HTTP/2 302
-content-length: 0
-location: https://gate.sko.ai/?rd=https://paperless.sko.ai:8443/
-cache-control: no-cache
+
+% nslookup paperless.sko.ai
+Server:		192.168.1.1
+Address:	192.168.1.1#53
+
+Name:	paperless.sko.ai
+Address: 10.244.19.176
+Name:	paperless.sko.ai
+Address: 10.244.1.104
+```
+
+You may use also assign additional custom hostnames to a service, aside from the `.minilb` hostname, via the `minilb/host` annotation. This can be useful if you want to use TLS with protocols other than HTTP.
+
+
+For example both `mosquitto.automation.minilb` and `mqtt.sko.ai` will resolve to the service endpoints given the following service metadata:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    minilb/host: mqtt.sko.ai
+  namespace: mqtt
+  namespace: automation
 ```
 
 ## Requirements
@@ -94,7 +111,7 @@ Calico does not use the CIDR's assigned by `kube-controller-manager` but instead
 
 ## Deployment
 
-[Reference the example HA deployment deployment](https://github.com/vaskozl/home-infra/tree/main/cluster/minilb)  leveraging [bjw-s' app-template](https://bjw-s.github.io/helm-charts/docs/app-template/). You must run only a single replica with `-controller=true` but can otherwise run as many replicas as you like. Your network should then be configured  to use minilb as a resolver for the `.minilb` (or any other chosen) domain. The suggested way to do this is to expose `minilb` itself as a `NodePort`, after which after can use `type=LoadBalancer` for everything else.
+[Reference the example HA deployment deployment](https://github.com/vaskozl/home-infra/tree/main/cluster/minilb). Your network should then be configured to use minilb as a resolver for the `.minilb` (or any other chosen) domain and optionally for any domains used by your ingresses. The suggested way to do this is to expose `minilb` itself as a `NodePort` or a `Daemonset` with `hostPort`. After this you can use `type=LoadBalancer` for everything else!
 
 ## Limitations
 
