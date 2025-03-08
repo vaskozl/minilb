@@ -48,7 +48,7 @@ mosquitto.automation.minilb.    5    IN    A    10.244.1.103
  The idea is that the router has static routes for the podCIDRs for each node (based on the node spec), and we run a resolver which resolves the service "hostname" to pod IPs. One of the benefits is that you can advertise the static routes over DHCP to remove the hop through the router for traffic local to the LAN. This also means you don't need BGP and can use any router that supports static routes. To make ingresses work, the controller sets the `status.loadBalancer.Hostname` of each service to the hostname that resolves to the pods, that way `external-dns` and `k8s-gateway` will CNAME your defined Ingress `hosts` to the associated `.minilb` record.
 
 
-`minilb` updates the external IPs of LoadBalancer services to the configured domain:
+`minilb` updates the external IPs of LoadBalancer services with the `minilb` LoadBalancerClass the configured domain:
 ```
 $ k get svc -n haproxy internal-kubernetes-ingress
 NAME                          TYPE           CLUSTER-IP       EXTERNAL-IP                                  PORT(S)                                                                               AGE

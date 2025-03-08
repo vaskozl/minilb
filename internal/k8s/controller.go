@@ -19,6 +19,7 @@ import (
 )
 
 const HostnameAnnotation = "minilb/host"
+const LBClass = "minilb"
 
 var (
 	clientset     *kubernetes.Clientset
@@ -50,6 +51,10 @@ func onAddOrUpdate(ctx context.Context, obj interface{}) {
 	}
 
 	if svc.Spec.Type != v1.ServiceTypeLoadBalancer {
+		return
+	}
+
+	if svc.Spec.LoadBalancerClass == nil || *(svc.Spec.LoadBalancerClass) != LBClass {
 		return
 	}
 
