@@ -7,6 +7,7 @@ import (
 	"time"
 
 	v1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
@@ -20,6 +21,7 @@ import (
 
 const HostnameAnnotation = "minilb/host"
 const LBClass = "minilb"
+const endpointSliceServiceLabel = "kubernetes.io/service-name"
 
 var (
 	clientset     *kubernetes.Clientset
@@ -72,11 +74,108 @@ func onAddOrUpdate(ctx context.Context, obj interface{}) {
 }
 
 func GetEndpoints(serviceName string, namespace string) (*v1.Endpoints, error) {
-	endpoints, err := clientset.CoreV1().Endpoints(namespace).Get(context.Background(), serviceName, metav1.GetOptions{})
+	labelSelector := labels.Set{
+		endpointSliceServiceLabel: serviceName,
+	}.AsSelector().String()
+
+	endpointSlices, err := clientset.DiscoveryV1().EndpointSlices(namespace).List(
+		context.Background(),
+		metav1.ListOptions{LabelSelector: labelSelector},
+	)
 	if err != nil {
 		return nil, err
 	}
-	return endpoints, nil
+
+	subsets := make([]v1.EndpointSubset, 0, len(endpointSlices.Items))
+	for _, slice := range endpointSlices.Items {
+		if slice.AddressType != discoveryv1.AddressTypeIPv4 {
+			continue
+		}
+
+		subset := v1.EndpointSubset{
+			Ports: convertEndpointPorts(slice.Ports),
+		}
+
+		for _, endpoint := range slice.Endpoints {
+			if !isReadyEndpoint(&endpoint) {
+				continue
+			}
+
+			for _, address := range endpoint.Addresses {
+				subset.Addresses = append(subset.Addresses, v1.EndpointAddress{
+					IP: address,
+				})
+			}
+		}
+
+		if len(subset.Addresses) > 0 {
+			subsets = append(subsets, subset)
+		}
+	}
+
+	if len(subsets) == 0 {
+		return nil, errors.New("no ready IPv4 endpoints found")
+	}
+
+	return &v1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceName,
+			Namespace: namespace,
+		},
+		Subsets: subsets,
+	}, nil
+}
+
+func convertEndpointPorts(ports []discoveryv1.EndpointPort) []v1.EndpointPort {
+	if len(ports) == 0 {
+		return nil
+	}
+
+	result := make([]v1.EndpointPort, 0, len(ports))
+	for _, port := range ports {
+		var endpointPort v1.EndpointPort
+		if port.Name != nil {
+			endpointPort.Name = *port.Name
+		}
+
+		if port.Protocol != nil {
+			endpointPort.Protocol = v1.Protocol(*port.Protocol)
+		} else {
+			endpointPort.Protocol = v1.ProtocolTCP
+		}
+
+		if port.Port != nil {
+			endpointPort.Port = *port.Port
+		}
+
+		if port.AppProtocol != nil {
+			endpointPort.AppProtocol = port.AppProtocol
+		}
+
+		result = append(result, endpointPort)
+	}
+
+	return result
+}
+
+func isReadyEndpoint(endpoint *discoveryv1.Endpoint) bool {
+	if endpoint == nil || len(endpoint.Addresses) == 0 {
+		return false
+	}
+
+	if endpoint.Conditions.Ready != nil && !*endpoint.Conditions.Ready {
+		return false
+	}
+
+	if endpoint.Conditions.Serving != nil && !*endpoint.Conditions.Serving {
+		return false
+	}
+
+	if endpoint.Conditions.Terminating != nil && *endpoint.Conditions.Terminating {
+		return false
+	}
+
+	return true
 }
 
 func GetAddressForHostname(hostname string) (string, error) {
