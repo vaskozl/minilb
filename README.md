@@ -1,28 +1,26 @@
-# minilb - Lightweight DNS based load balancer for Kubernetes
+# minilb - Lightweight DNS-based load balancer for Kubernetes
 
-## Why create a new loadbalancer?
+## Why create a new load balancer?
 
-While MetalLB has long been the standard and many CNIs now supports BGP advertisement, issues still remain:
+While MetalLB has long been the standard and many CNIs now support BGP advertisement, issues remain:
 
-* MetalLB L2:
-    * Does not offer any loadbalancing between service replicas and throughput is limited to a single node
-    * Slow failover
-* BGP solutions including MetalLB, Calico, Cilium and kube-rouer have other limitations:
-    * Forward all non-peer traffic through a default gateway. This limits your bandwith to the cluster and adds an extra hop
-    * Can suffer from assymetric routing issues on LANs and generally requires disabling ICMP redirects
-    * Requires a BGP capable router at all times which can limit flexibility
-    * Nodes generally get a static subnet and BGP does close to nothing, neither Cilium nor Flannel actually use it to "distribute" routes between nodes since the routes are readily available from the APIServer.
+* MetalLB L2 does not offer any load balancing between service replicas, throughput is limited to a single node, and failover is slow.
+* BGP solutions including MetalLB, Calico, Cilium and kube-router have other limitations:
+    * Forward all non-peer traffic through a default gateway. This limits your bandwidth to the cluster and adds an extra hop
+    * Can suffer from asymmetric routing issues on LANs and generally requires disabling ICMP redirects
+    * Requires a BGP-capable router at all times which can limit flexibility
+    * Nodes generally get a static subnet and BGP does close to nothing, since neither Cilium nor Flannel use it to distribute routes between nodes when they are readily available from the API server
 
-Furthemore other load-balancing solutions tend to be much heavier - requiring daemonsets that tend to use between 15-100m CPU and between 35-150Mi of RAM in my tests. This amounts to undue energy usage and less room for your actual applications. `flannel` is particularly suited, since when in `host-gw` mode performs native routing similar to the other CNIs with no VXLAN penalties while using only 1m/10Mi per node.
+Other load-balancing solutions tend to be much heavier, requiring daemonsets that use 15-100m CPU and 35-150Mi RAM per node. This wastes energy and leaves less room for actual workloads. `flannel` in `host-gw` mode is particularly well suited, performing native routing with no VXLAN overhead while using only 1m/10Mi per node.
 
-Lastly all other solutions rely on CRDs which make boostraping a cluster that much more difficult.
+Lastly, all other solutions rely on CRDs which make bootstrapping a cluster more difficult.
 
-## How `minilb` works
+## How it works
 
-At startup `minilb` looks up all routes to nodes and prints them out for you so you can set on default gateways
-or even directly on devices. The manual step is similar to how you would add each node as a BGP peer, but instead you just add the static route to the node. The podCIDRss are normally assigned by [kube-controller-manager](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/) and are static once the node is provisioned.
+`minilb` resolves service hostnames directly to pod IPs. Your router has static routes for each node's `podCIDR`, so traffic reaches pods without going through `kube-proxy` or a service VIP.
 
-On startup `minilb` prints:
+On startup `minilb` prints the routes you need to add to your default gateway (or advertise via DHCP):
+
 ```
 Add the following routes to your default gateway (router):
 ip route add 10.244.0.0/24 via 192.168.1.30
@@ -30,94 +28,89 @@ ip route add 10.244.1.0/24 via 192.168.1.31
 ip route add 10.244.2.0/24 via 192.168.1.32
 ```
 
-Example queries that `minilb` handles:
+The `podCIDRs` are assigned by [kube-controller-manager](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/) and are static once a node is provisioned.
+
+For each `LoadBalancer` service with `loadBalancerClass: minilb`, the controller sets `status.loadBalancer.hostname` to `<service>.<namespace>.<domain>`, which resolves to the service's ready pod IPs:
+
 ```
-2024/05/11 13:11:06 DNS server started on :53
-;; opcode: QUERY, status: NOERROR, id: 10290
-;; flags: qr aa rd; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 0
-
-;; QUESTION SECTION:
-;mosquitto.automation.minilb.    IN    A
-
-;; ANSWER SECTION:
-mosquitto.automation.minilb.    5    IN    A    10.244.19.168
-mosquitto.automation.minilb.    5    IN    A    10.244.1.103
-```
-
-
- The idea is that the router has static routes for the podCIDRs for each node (based on the node spec), and we run a resolver which resolves the service "hostname" to pod IPs. One of the benefits is that you can advertise the static routes over DHCP to remove the hop through the router for traffic local to the LAN. This also means you don't need BGP and can use any router that supports static routes. To make ingresses work, the controller sets the `status.loadBalancer.Hostname` of each service to the hostname that resolves to the pods, that way `external-dns` and `k8s-gateway` will CNAME your defined Ingress `hosts` to the associated `.minilb` record.
-
-
-`minilb` updates the external IPs of LoadBalancer services with the `minilb` LoadBalancerClass the configured domain:
-```
-$ k get svc -n haproxy internal-kubernetes-ingress
-NAME                          TYPE           CLUSTER-IP       EXTERNAL-IP                                  PORT(S)                                                                               AGE
+$ kubectl get svc -n haproxy internal-kubernetes-ingress
+NAME                          TYPE           CLUSTER-IP       EXTERNAL-IP                                  PORT(S)
 internal-kubernetes-ingress   LoadBalancer   10.110.115.188   internal-kubernetes-ingress.haproxy.minilb   80:...
-```
 
-They resolve directly to the pod which your network knows how to route:
-```
 $ nslookup internal-kubernetes-ingress.haproxy.minilb
-Server:        192.168.1.1
-Address:    192.168.1.1#53
-
 Name:    internal-kubernetes-ingress.haproxy.minilb
 Address: 10.244.19.176
 Name:    internal-kubernetes-ingress.haproxy.minilb
 Address: 10.244.1.104
 ```
 
-Since version `0.0.4` minilb also supports resolving ingresses directly, which removes the need to use `k8s-gateway`.
+This means `external-dns` and `k8s-gateway` will CNAME your Ingress hosts to the `.minilb` record automatically.
+
+`minilb` can also resolve Ingress and Gateway API (HTTPRoute, TLSRoute, GRPCRoute) hostnames directly, removing the need for `k8s-gateway`:
+
 ```
-$ k get ingress paperless-ngx
+$ kubectl get ingress paperless-ngx
 NAME            CLASS              HOSTS              ADDRESS                                      PORTS   AGE
 paperless-ngx   haproxy-internal   paperless.sko.ai   internal-kubernetes-ingress.haproxy.minilb   80      22d
 
-
-% nslookup paperless.sko.ai
-Server:		192.168.1.1
-Address:	192.168.1.1#53
-
-Name:	paperless.sko.ai
+$ nslookup paperless.sko.ai
+Name:    paperless.sko.ai
 Address: 10.244.19.176
-Name:	paperless.sko.ai
+Name:    paperless.sko.ai
 Address: 10.244.1.104
 ```
 
-You may use also assign additional custom hostnames to a service, aside from the `.minilb` hostname, via the `minilb/host` annotation. This can be useful if you want to use TLS with protocols other than HTTP.
+## Custom hostname annotations
 
+You can assign additional hostnames to a service via the `minilb/host` annotation. Multiple hostnames are specified as a comma-separated list. This is useful for TLS with non-HTTP protocols or for giving a service multiple DNS names.
 
-For example both `mosquitto.automation.minilb` and `mqtt.sko.ai` will resolve to the service endpoints given the following service metadata:
+For example, `mosquitto.automation.minilb`, `mqtt.sko.ai`, and `mqtt.example.com` will all resolve to the service endpoints:
 
 ```yaml
 apiVersion: v1
 kind: Service
 metadata:
   annotations:
-    minilb/host: mqtt.sko.ai
-  namespace: mqtt
+    minilb/host: mqtt.sko.ai, mqtt.example.com
+  name: mosquitto
   namespace: automation
 ```
 
+## Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-kubeconfig` | `""` | Path to a kubeconfig file (auto-detected in-cluster) |
+| `-domain` | `minilb` | Zone under which to resolve services |
+| `-listen` | `:53` | Address and port for the DNS server |
+| `-resync` | `300` | Informer resync period in seconds |
+| `-ttl` | `5` | DNS record TTL in seconds |
+| `-upstream` | `""` | Upstream DNS server for forwarding (e.g. `1.1.1.1:53`) |
+| `-health` | `:8080` | Address for the health/readiness endpoint |
+
+When `-upstream` is set, queries for domains that `minilb` does not handle are forwarded to the upstream resolver. This allows `minilb` to act as a full resolver for clients that point at it exclusively.
+
+Both A and AAAA queries are supported. If your pods have IPv6 addresses (dual-stack or IPv6-only), AAAA queries return the IPv6 endpoint addresses.
+
+The `/healthz` endpoint returns `200 OK` once informer caches are synced, suitable for Kubernetes liveness and readiness probes.
+
 ## Requirements
 
-`minilb` expects your default gateway to have static routes for the nodes `podCIDRs`. In order to help set that up it prints podCIDRs assigned by kube-controller-manager on startup. Typically this is achieved by running `kube-controller-manager` with the `--allocate-node-cidrs` flag.
+`minilb` expects your default gateway to have static routes for each node's `podCIDR`. It prints these on startup to help you set them up. This requires running `kube-controller-manager` with `--allocate-node-cidrs`.
 
-Both `flanneld` and `kube-router` should require no additional configuration as they use `podCIDRs` by default.
-
-For Cilium the [Kubernetes Host Scope IPAM](https://docs.cilium.io/en/stable/network/concepts/ipam/kubernetes/) should be used. The default is Cluster Scope.
-
-Calico does not use the CIDR's assigned by `kube-controller-manager` but instead assigns blocks of /28 dynamically. This makes it unsuitable for use with `minilb`.
+* `flanneld` and `kube-router` require no additional configuration as they use `podCIDRs` by default.
+* Cilium requires [Kubernetes Host Scope IPAM](https://docs.cilium.io/en/stable/network/concepts/ipam/kubernetes/). The default Cluster Scope will not work.
+* Calico assigns /28 blocks dynamically instead of using `kube-controller-manager` CIDRs, making it unsuitable for use with `minilb`.
 
 ## Deployment
 
-[Reference the example HA deployment deployment](https://github.com/vaskozl/home-infra/tree/main/cluster/minilb). Your network should then be configured to use minilb as a resolver for the `.minilb` (or any other chosen) domain and optionally for any domains used by your ingresses. The suggested way to do this is to expose `minilb` itself as a `NodePort` or a `Daemonset` with `hostPort`. After this you can use `type=LoadBalancer` for everything else!
+[Reference the example HA deployment](https://github.com/vaskozl/home-infra/tree/main/cluster/minilb). Your network should be configured to use `minilb` as a resolver for the `.minilb` domain and optionally for any domains used by your ingresses. The suggested approach is to expose `minilb` as a `NodePort` or via a `DaemonSet` with `hostPort`. After that you can use `type=LoadBalancer` for everything else.
 
 ## Limitations
 
-By far the biggest limitations is that because we completely bypass the service ip and  `kube-proxy`, the service `port` to `targetPort` mapping is bypassed. This means that you need to have the containers listening to the same ports you want to access them by. Traditionally this was a problem for ports less than `1024` which required root, but this is now easily achieved directly since 1.22:
+Because `minilb` bypasses the service VIP and `kube-proxy`, the service `port` to `targetPort` mapping is not applied. Containers must listen on the same ports you want to reach them on. Since Kubernetes 1.22 this is straightforward even for privileged ports:
 
-```
+```yaml
 apiVersion: v1
 kind: Pod
 metadata:
@@ -129,11 +122,11 @@ spec:
       value: "80"
 ```
 
-There are a few other things which you should consider:
+Other considerations:
 
-* Users needs to respect the short TTLs of the `minilb` response
-* Some apps do DNS lookups only once and cache the results indefinitely.
+* Clients must respect the short TTLs in `minilb` responses.
+* Some applications perform DNS lookups only once and cache the result indefinitely.
 
 ## Is `minilb` production ready?
 
-No, it's still very new and experimental, but you may use it for small setups such as in your homelab.
+No. It is still new and experimental, but it works well for small setups such as a homelab.

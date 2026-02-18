@@ -1,101 +1,199 @@
 package dns
 
 import (
-	"fmt"
-	"math/rand"
+	"context"
+	"log/slog"
+	"math/rand/v2"
 	"net"
 	"strings"
 
-	"github.com/miekg/dns"
-	"k8s.io/klog/v2"
+	discoveryv1 "k8s.io/api/discovery/v1"
 
-	"github.com/vaskozl/minilb/internal/config"
-	"github.com/vaskozl/minilb/internal/k8s"
+	"github.com/miekg/dns"
 )
 
-var server *dns.Server
-
-func Run() {
-	// Create a DNS server
-	server = &dns.Server{Addr: *config.Listen, Net: "udp"}
-
-	// Setup DNS handler
-	dns.HandleFunc(".", handleDNSRequest)
-
-	// Start DNS server
-	go func() {
-		err := server.ListenAndServe()
-		if err != nil {
-			klog.Fatalf("Error starting DNS server: %v", err)
-		}
-	}()
-	klog.Infof("DNS server started on %s", server.Addr)
+// Resolver looks up hostnames and endpoint IPs for the DNS handler.
+type Resolver interface {
+	GetAddressForHostname(hostname string) (string, error)
+	GetEndpointIPs(serviceName, namespace string, addrType discoveryv1.AddressType) ([]string, error)
 }
 
-func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
+// Handler serves DNS requests backed by a Resolver.
+type Handler struct {
+	Domain   string
+	TTL      uint32
+	Resolver Resolver
+	Upstream string // optional upstream resolver for non-handled queries
+}
+
+func (h *Handler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m := new(dns.Msg)
 	m.SetReply(r)
 	m.Authoritative = true
 
-	suffix := "." + *config.Domain
-
-	if r.Question[0].Qtype == dns.TypeA {
-
-		name := strings.TrimSuffix(r.Question[0].Name, ".")
-
-		if !strings.HasSuffix(name, suffix) {
-			tmp, err := k8s.GetAddressForHostname(name)
-			if err != nil {
-				klog.Errorf("%s: %s", name, err.Error())
-				w.WriteMsg(m)
-				return
-			}
-			name = tmp
+	if len(r.Question) > 0 {
+		switch r.Question[0].Qtype {
+		case dns.TypeA:
+			h.handleAddr(m, r, false)
+		case dns.TypeAAAA:
+			h.handleAddr(m, r, true)
+		case dns.TypeSOA:
+			h.handleSOA(m, r)
+		default:
+			h.tryForward(m, r)
 		}
-		name = strings.TrimSuffix(name, suffix)
-
-		parts := strings.SplitN(name, ".", 2)
-		if len(parts) != 2 {
-			klog.Warningf("Invalid domain format: %s", name)
-			w.WriteMsg(m)
-			return
-		}
-		serviceName, namespace := parts[0], parts[1]
-
-		endpoints, err := k8s.GetEndpoints(serviceName, namespace)
-		if err != nil {
-			klog.Errorf("Error getting Endpoints for %s: %v", serviceName, err)
-			w.WriteMsg(m)
-			return
-		}
-
-		for _, subset := range endpoints.Subsets {
-			for _, address := range subset.Addresses {
-				rr := dns.TypeA
-				ip := net.ParseIP(address.IP)
-				m.Answer = append(m.Answer, &dns.A{
-					Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: rr, Class: dns.ClassINET, Ttl: uint32(*config.TTL)},
-					A:   ip,
-				})
-			}
-		}
-
-		// Shuffle the responses so we get some load balancing
-		shuffleDNSAnswers(m.Answer)
-
-		klog.InfoS(fmt.Sprintf("%+v", m.Answer),
-			"svc", serviceName,
-			"ns", namespace,
-		)
 	}
 
-	w.WriteMsg(m)
-	klog.V(2).Infof("%v", m)
+	if err := w.WriteMsg(m); err != nil {
+		slog.Error("Failed to write DNS response", "err", err)
+	}
 }
 
-func shuffleDNSAnswers(answers []dns.RR) {
-	for i := range answers {
-		j := rand.Intn(i + 1)
-		answers[i], answers[j] = answers[j], answers[i]
+func (h *Handler) handleAddr(m, r *dns.Msg, v6 bool) {
+	suffix := "." + h.Domain
+	name := strings.TrimSuffix(r.Question[0].Name, ".")
+
+	if !strings.HasSuffix(name, suffix) {
+		resolved, err := h.Resolver.GetAddressForHostname(name)
+		if err != nil {
+			if h.tryForward(m, r) {
+				return
+			}
+			slog.Debug("Hostname not found", "name", name, "err", err)
+			m.Rcode = dns.RcodeNameError
+			return
+		}
+		name = resolved
+	}
+	name = strings.TrimSuffix(name, suffix)
+
+	svc, ns, ok := ParseServiceName(name)
+	if !ok {
+		slog.Warn("Invalid domain format", "name", name)
+		m.Rcode = dns.RcodeNameError
+		return
+	}
+
+	addrType := discoveryv1.AddressTypeIPv4
+	if v6 {
+		addrType = discoveryv1.AddressTypeIPv6
+	}
+
+	ips, err := h.Resolver.GetEndpointIPs(svc, ns, addrType)
+	if err != nil {
+		slog.Debug("No endpoints", "svc", svc, "ns", ns, "err", err)
+		m.Rcode = dns.RcodeNameError
+		return
+	}
+
+	qname := r.Question[0].Name
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if v6 {
+			if ip.To4() != nil {
+				continue
+			}
+			m.Answer = append(m.Answer, &dns.AAAA{
+				Hdr:  dns.RR_Header{Name: qname, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: h.TTL},
+				AAAA: ip,
+			})
+		} else {
+			ip4 := ip.To4()
+			if ip4 == nil {
+				continue
+			}
+			m.Answer = append(m.Answer, &dns.A{
+				Hdr: dns.RR_Header{Name: qname, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: h.TTL},
+				A:   ip4,
+			})
+		}
+	}
+
+	rand.Shuffle(len(m.Answer), func(i, j int) {
+		m.Answer[i], m.Answer[j] = m.Answer[j], m.Answer[i]
+	})
+
+	slog.Debug("Resolved", "svc", svc, "ns", ns, "answers", len(m.Answer))
+}
+
+func (h *Handler) handleSOA(m, r *dns.Msg) {
+	qname := r.Question[0].Name
+	if !strings.HasSuffix(strings.TrimSuffix(qname, "."), h.Domain) && qname != h.Domain+"." {
+		h.tryForward(m, r)
+		return
+	}
+	m.Answer = append(m.Answer, &dns.SOA{
+		Hdr:     dns.RR_Header{Name: h.Domain + ".", Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: h.TTL},
+		Ns:      "ns." + h.Domain + ".",
+		Mbox:    "admin." + h.Domain + ".",
+		Serial:  1,
+		Refresh: 3600,
+		Retry:   600,
+		Expire:  86400,
+		Minttl:  h.TTL,
+	})
+}
+
+// tryForward attempts to forward the request to the upstream resolver.
+// Returns true if the forward was successful and m was populated.
+func (h *Handler) tryForward(m, r *dns.Msg) bool {
+	if h.Upstream == "" {
+		return false
+	}
+	resp, err := dns.Exchange(r, h.Upstream)
+	if err != nil {
+		slog.Debug("Upstream forward failed", "err", err)
+		return false
+	}
+	resp.Id = r.Id
+	*m = *resp
+	m.Authoritative = false
+	return true
+}
+
+// ParseServiceName splits "service.namespace" into its parts.
+func ParseServiceName(name string) (service, namespace string, ok bool) {
+	if i := strings.IndexByte(name, '.'); i > 0 && i < len(name)-1 {
+		return name[:i], name[i+1:], true
+	}
+	return "", "", false
+}
+
+// Server wraps UDP and TCP DNS servers for graceful shutdown.
+type Server struct {
+	udp *dns.Server
+	tcp *dns.Server
+}
+
+// Run starts UDP and TCP DNS servers in the background.
+func Run(handler *Handler, listen string) *Server {
+	s := &Server{
+		udp: &dns.Server{Addr: listen, Net: "udp", Handler: handler},
+		tcp: &dns.Server{Addr: listen, Net: "tcp", Handler: handler},
+	}
+	go func() {
+		if err := s.udp.ListenAndServe(); err != nil {
+			slog.Error("UDP DNS server failed", "err", err)
+		}
+	}()
+	go func() {
+		if err := s.tcp.ListenAndServe(); err != nil {
+			slog.Error("TCP DNS server failed", "err", err)
+		}
+	}()
+	slog.Info("DNS server started", "addr", listen)
+	return s
+}
+
+// Shutdown gracefully stops both servers.
+func (s *Server) Shutdown(ctx context.Context) {
+	if err := s.udp.ShutdownContext(ctx); err != nil {
+		slog.Error("UDP shutdown error", "err", err)
+	}
+	if err := s.tcp.ShutdownContext(ctx); err != nil {
+		slog.Error("TCP shutdown error", "err", err)
 	}
 }
