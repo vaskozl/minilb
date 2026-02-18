@@ -9,7 +9,7 @@ While MetalLB has long been the standard and many CNIs now support BGP advertise
     * Forward all non-peer traffic through a default gateway. This limits your bandwidth to the cluster and adds an extra hop
     * Can suffer from asymmetric routing issues on LANs and generally requires disabling ICMP redirects
     * Requires a BGP-capable router at all times which can limit flexibility
-    * Nodes generally get a static subnet and BGP does close to nothing, since neither Cilium nor Flannel use it to distribute routes between nodes when they are readily available from the API server
+    * Nodes generally get a static subnet and BGP does close to nothing. Neither Cilium nor Flannel use it to distribute routes between nodes as they are readily available from the API server
 
 Other load-balancing solutions tend to be much heavier, requiring daemonsets that use 15-100m CPU and 35-150Mi RAM per node. This wastes energy and leaves less room for actual workloads. `flannel` in `host-gw` mode is particularly well suited, performing native routing with no VXLAN overhead while using only 1m/10Mi per node.
 
