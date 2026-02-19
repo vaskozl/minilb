@@ -1,5 +1,5 @@
 test:
-  image: cgr.dev/chainguard/go:latest-dev
+  image: cgr.dev/chainguard/go:latest-dev@sha256:8e1f280993216877cac863b5a9de68727b42c242840705890b456858a1f072be
   script:
     - go vet ./...
     - go test ./...
