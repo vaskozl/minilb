@@ -1,5 +1,5 @@
 test:
-  image: ghcr.io/vaskozl/go:1.25.7@sha256:6c5e40fc9a22cb75f5ebeacf9e2bc19fb887ef4a590cc2d1697c9ed5688f1567
+  image: ghcr.io/vaskozl/go:1.25.7@sha256:ce1c43141d99111edf3db67783c870051a49d98ff6aacb851f76dd2178d459ad
   script:
     - go vet ./...
     - go test ./...
