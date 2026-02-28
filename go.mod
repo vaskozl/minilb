@@ -4,9 +4,9 @@ go 1.25.0
 
 require (
 	github.com/miekg/dns v1.1.72
-	k8s.io/api v0.35.1
-	k8s.io/apimachinery v0.35.1
-	k8s.io/client-go v0.35.1
+	k8s.io/api v0.35.2
+	k8s.io/apimachinery v0.35.2
+	k8s.io/client-go v0.35.2
 	sigs.k8s.io/gateway-api v1.5.0
 )
 
