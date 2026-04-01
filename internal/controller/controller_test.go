@@ -4,6 +4,12 @@ import (
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
+	netv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/cache"
+	netv1listers "k8s.io/client-go/listers/networking/v1"
+	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1listers "sigs.k8s.io/gateway-api/pkg/client/listers/apis/v1"
 )
 
 func TestGetAddressForHostname(t *testing.T) {
@@ -148,5 +154,123 @@ func TestNodeInternalIP(t *testing.T) {
 				t.Errorf("NodeInternalIP() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func newIngressLister(ingresses ...*netv1.Ingress) netv1listers.IngressLister {
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	for _, ing := range ingresses {
+		_ = indexer.Add(ing)
+	}
+	return netv1listers.NewIngressLister(indexer)
+}
+
+func newHTTPRouteLister(routes ...*gwapiv1.HTTPRoute) gatewayv1listers.HTTPRouteLister {
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	for _, r := range routes {
+		_ = indexer.Add(r)
+	}
+	return gatewayv1listers.NewHTTPRouteLister(indexer)
+}
+
+func TestResolveIngressHostnameExcluded(t *testing.T) {
+	ing := &netv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "ha-external",
+			Namespace:   "default",
+			Annotations: map[string]string{ExcludeAnnotation: "true"},
+		},
+		Spec: netv1.IngressSpec{
+			Rules: []netv1.IngressRule{{Host: "ha.sko.ai"}},
+		},
+	}
+	ing.Status.LoadBalancer.Ingress = []netv1.IngressLoadBalancerIngress{{IP: "1.2.3.4"}}
+
+	c := &Controller{ingressLister: newIngressLister(ing)}
+	addr, err := c.resolveIngressHostname("ha.sko.ai")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if addr != "" {
+		t.Errorf("excluded ingress should not resolve, got %q", addr)
+	}
+}
+
+func TestResolveIngressHostnameNotExcluded(t *testing.T) {
+	ing := &netv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ha-internal",
+			Namespace: "default",
+		},
+		Spec: netv1.IngressSpec{
+			Rules: []netv1.IngressRule{{Host: "ha.sko.ai"}},
+		},
+	}
+	ing.Status.LoadBalancer.Ingress = []netv1.IngressLoadBalancerIngress{{IP: "10.0.0.1"}}
+
+	c := &Controller{ingressLister: newIngressLister(ing)}
+	addr, err := c.resolveIngressHostname("ha.sko.ai")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if addr != "10.0.0.1" {
+		t.Errorf("expected 10.0.0.1, got %q", addr)
+	}
+}
+
+func TestResolveIngressHostnameBothExcludedAndNot(t *testing.T) {
+	excluded := &netv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "ha-external",
+			Namespace:   "default",
+			Annotations: map[string]string{ExcludeAnnotation: "true"},
+		},
+		Spec: netv1.IngressSpec{
+			Rules: []netv1.IngressRule{{Host: "ha.sko.ai"}},
+		},
+	}
+	excluded.Status.LoadBalancer.Ingress = []netv1.IngressLoadBalancerIngress{{IP: "5.6.7.8"}}
+
+	included := &netv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ha-internal",
+			Namespace: "internal",
+		},
+		Spec: netv1.IngressSpec{
+			Rules: []netv1.IngressRule{{Host: "ha.sko.ai"}},
+		},
+	}
+	included.Status.LoadBalancer.Ingress = []netv1.IngressLoadBalancerIngress{{IP: "10.0.0.1"}}
+
+	c := &Controller{ingressLister: newIngressLister(excluded, included)}
+	addr, err := c.resolveIngressHostname("ha.sko.ai")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if addr != "10.0.0.1" {
+		t.Errorf("expected internal ingress to resolve, got %q", addr)
+	}
+}
+
+func TestResolveHTTPRouteHostnameExcluded(t *testing.T) {
+	route := &gwapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "ha-external",
+			Namespace:   "default",
+			Annotations: map[string]string{ExcludeAnnotation: "true"},
+		},
+		Spec: gwapiv1.HTTPRouteSpec{
+			CommonRouteSpec: gwapiv1.CommonRouteSpec{},
+			Hostnames:       []gwapiv1.Hostname{"ha.sko.ai"},
+		},
+	}
+
+	c := &Controller{httpRouteLister: newHTTPRouteLister(route)}
+	addr, err := c.resolveHTTPRouteHostname("ha.sko.ai")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if addr != "" {
+		t.Errorf("excluded HTTPRoute should not resolve, got %q", addr)
 	}
 }
