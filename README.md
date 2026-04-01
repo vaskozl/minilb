@@ -76,6 +76,28 @@ metadata:
   namespace: automation
 ```
 
+## Excluding resources from DNS resolution
+
+When a hostname appears on both an internal and external Ingress (or HTTPRoute), add the `minilb/exclude: "true"` annotation to the resource you want to exclude from DNS resolution. `minilb` will skip that resource and resolve the hostname from the remaining ones.
+
+For example, to prevent `minilb` from resolving `ha.sko.ai` via the external ingress:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    minilb/exclude: "true"
+  name: ha-external
+  namespace: default
+spec:
+  rules:
+    - host: ha.sko.ai
+      ...
+```
+
+The annotation is supported on all resource types that `minilb` resolves: `Ingress`, `HTTPRoute`, `TLSRoute`, and `GRPCRoute`.
+
 ## Flags
 
 | Flag | Default | Description |

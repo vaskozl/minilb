@@ -27,9 +27,14 @@ import (
 
 const (
 	HostnameAnnotation        = "minilb/host"
+	ExcludeAnnotation         = "minilb/exclude"
 	LBClass                   = "minilb"
 	endpointSliceServiceLabel = "kubernetes.io/service-name"
 )
+
+func isExcluded(annotations map[string]string) bool {
+	return annotations[ExcludeAnnotation] == "true"
+}
 
 type Controller struct {
 	clientset           *kubernetes.Clientset
@@ -284,6 +289,9 @@ func (c *Controller) resolveIngressHostname(hostname string) (string, error) {
 		return "", err
 	}
 	for _, ing := range ingresses {
+		if isExcluded(ing.Annotations) {
+			continue
+		}
 		for _, rule := range ing.Spec.Rules {
 			if !HostnameMatches(rule.Host, hostname) {
 				continue
@@ -312,6 +320,9 @@ func (c *Controller) resolveHTTPRouteHostname(hostname string) (string, error) {
 		return "", err
 	}
 	for _, route := range routes {
+		if isExcluded(route.Annotations) {
+			continue
+		}
 		if !ContainsMatchingHostname(hostnamesToStrings[gwapiv1alpha3.Hostname](route.Spec.Hostnames), hostname) {
 			continue
 		}
@@ -331,6 +342,9 @@ func (c *Controller) resolveTLSRouteHostname(hostname string) (string, error) {
 		return "", err
 	}
 	for _, route := range routes {
+		if isExcluded(route.Annotations) {
+			continue
+		}
 		if !ContainsMatchingHostname(hostnamesToStrings(route.Spec.Hostnames), hostname) {
 			continue
 		}
@@ -350,6 +364,9 @@ func (c *Controller) resolveGRPCRouteHostname(hostname string) (string, error) {
 		return "", err
 	}
 	for _, route := range routes {
+		if isExcluded(route.Annotations) {
+			continue
+		}
 		if !ContainsMatchingHostname(hostnamesToStrings(route.Spec.Hostnames), hostname) {
 			continue
 		}
