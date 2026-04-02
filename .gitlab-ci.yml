@@ -1,5 +1,10 @@
+lint:
+  image: ghcr.io/vaskozl/go:1.25.8@sha256:abd06e96262753f6bc122d899161bec322ef0b6679ebd1d3c6bacedb7eb83c3c
+  script:
+    - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin
+    - golangci-lint run ./...
+
 test:
   image: ghcr.io/vaskozl/go:1.25.8@sha256:abd06e96262753f6bc122d899161bec322ef0b6679ebd1d3c6bacedb7eb83c3c
   script:
-    - go vet ./...
     - go test ./...

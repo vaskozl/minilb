@@ -80,11 +80,13 @@ func New(ctx context.Context, kubeconfig, domain string, resyncSeconds int) (*Co
 	c.ingressLister = factory.Networking().V1().Ingresses().Lister()
 	c.endpointSliceLister = factory.Discovery().V1().EndpointSlices().Lister()
 
-	factory.Core().V1().Services().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	if _, err := factory.Core().V1().Services().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj interface{}) { c.onAddOrUpdate(ctx, obj) },
 		UpdateFunc: func(_, obj interface{}) { c.onAddOrUpdate(ctx, obj) },
 		DeleteFunc: c.onDelete,
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	var gwSyncs []cache.InformerSynced
 	if gwClient, gErr := gatewayclientset.NewForConfig(cfg); gErr != nil {
