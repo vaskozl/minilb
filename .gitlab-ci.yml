@@ -2,6 +2,7 @@ lint:
   image: ghcr.io/vaskozl/go:1.25.8@sha256:abd06e96262753f6bc122d899161bec322ef0b6679ebd1d3c6bacedb7eb83c3c
   script:
     - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+    - export PATH="$PATH:$(go env GOPATH)/bin"
     - golangci-lint run ./...
 
 test:
