@@ -26,6 +26,8 @@ type Handler struct {
 	Upstream string // optional upstream resolver for non-handled queries
 }
 
+// ServeDNS implements the dns.Handler interface for handling DNS queries.
+// It resolves A, AAAA, and SOA records, falling back to upstream resolution if configured.
 func (h *Handler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m := new(dns.Msg)
 	m.SetReply(r)

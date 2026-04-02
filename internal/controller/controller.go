@@ -36,6 +36,9 @@ func isExcluded(annotations map[string]string) bool {
 	return annotations[ExcludeAnnotation] == "true"
 }
 
+// Controller manages LoadBalancer services and DNS hostname mappings for minilb.
+// It watches Kubernetes services, ingresses, and gateway API resources to maintain
+// up-to-date hostname-to-service mappings.
 type Controller struct {
 	clientset           *kubernetes.Clientset
 	domain              string
@@ -52,6 +55,9 @@ type Controller struct {
 	ready bool
 }
 
+// New creates and initializes a new Controller with informer caches synced.
+// It sets up watchers for services, ingresses, and gateway API resources.
+// Blocks until all informer caches are synced or context is canceled.
 func New(ctx context.Context, kubeconfig, domain string, resyncSeconds int) (*Controller, error) {
 	cfg, err := buildConfig(kubeconfig)
 	if err != nil {
@@ -223,6 +229,9 @@ func (c *Controller) GetEndpointIPs(serviceName, namespace string, addrType disc
 	return ips, nil
 }
 
+// GetAddressForHostname resolves a hostname to a service address using cached mappings,
+// then falls back to resolving via ingresses and gateway API routes.
+// Returns the address (either hostname or IP) or an error if not found.
 func (c *Controller) GetAddressForHostname(hostname string) (string, error) {
 	canonical := CanonicalHostname(hostname)
 	if canonical == "" {
