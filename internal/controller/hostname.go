@@ -27,10 +27,14 @@ func HostnameMatches(candidate, query string) bool {
 	return false
 }
 
+// CanonicalHostname normalizes a hostname by converting to lowercase,
+// trimming whitespace, and removing trailing dots.
 func CanonicalHostname(host string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
 }
 
+// ContainsMatchingHostname checks if any hostname in the list matches the query.
+// Returns true if a matching hostname is found, false otherwise.
 func ContainsMatchingHostname(hosts []string, query string) bool {
 	for _, h := range hosts {
 		if HostnameMatches(h, query) {
@@ -40,6 +44,9 @@ func ContainsMatchingHostname(hosts []string, query string) bool {
 	return false
 }
 
+// IsReadyEndpoint checks if an endpoint is ready to receive traffic.
+// An endpoint is ready if it has addresses and is not terminating,
+// and its Ready and Serving conditions are true (if set).
 func IsReadyEndpoint(ep *discoveryv1.Endpoint) bool {
 	if ep == nil || len(ep.Addresses) == 0 {
 		return false
