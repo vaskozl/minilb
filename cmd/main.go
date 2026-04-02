@@ -48,10 +48,10 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		if ctrl.Ready() {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("ok"))
+			_, _ = w.Write([]byte("ok"))
 		} else {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("not ready"))
+			_, _ = w.Write([]byte("not ready"))
 		}
 	})
 	healthSrv := &http.Server{Addr: *healthAddr, Handler: mux}
@@ -68,5 +68,7 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(shutdownCtx)
-	healthSrv.Shutdown(shutdownCtx)
+	if err := healthSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("Health server shutdown error", "err", err)
+	}
 }
