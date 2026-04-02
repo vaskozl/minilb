@@ -142,7 +142,7 @@ func (c *Controller) onAddOrUpdate(ctx context.Context, obj interface{}) {
 			c.serviceMap[hostname] = lbDNS
 		}
 		c.mu.Unlock()
-		slog.Info("Mapped hostname(s)", "hosts", raw, "svc", svc.Namespace+"/"+svc.Name)
+		slog.Debug("Mapped hostname(s)", "hosts", raw, "svc", svc.Namespace+"/"+svc.Name)
 	}
 }
 
@@ -168,7 +168,7 @@ func (c *Controller) onDelete(obj interface{}) {
 		delete(c.serviceMap, hostname)
 	}
 	c.mu.Unlock()
-	slog.Info("Unmapped hostname(s)", "hosts", raw, "svc", svc.Namespace+"/"+svc.Name)
+	slog.Debug("Unmapped hostname(s)", "hosts", raw, "svc", svc.Namespace+"/"+svc.Name)
 }
 
 // parseHostnames splits a comma-separated annotation value into canonical hostnames.
@@ -189,7 +189,7 @@ func (c *Controller) updateServiceStatus(ctx context.Context, lbDNS string, svc 
 	if len(ing) == 1 && ing[0].IP == "" && ing[0].Hostname == lbDNS {
 		return nil
 	}
-	slog.Info("Setting LB host", "svc", svc.Name, "ns", svc.Namespace, "lb", lbDNS)
+	slog.Debug("Setting LB host", "svc", svc.Name, "ns", svc.Namespace, "lb", lbDNS)
 	patch := svc.DeepCopy()
 	patch.Status.LoadBalancer.Ingress = []v1.LoadBalancerIngress{{Hostname: lbDNS}}
 	_, err := c.clientset.CoreV1().Services(svc.Namespace).UpdateStatus(ctx, patch, metav1.UpdateOptions{})
